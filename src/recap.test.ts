@@ -45,6 +45,7 @@ describe("renderRecap", () => {
 		blocked: true,
 		kind: "implement",
 		title: "Make clipcap emit structured recaps",
+		request: "Make the recap structured JSON",
 		goal: "structured recap output",
 		progress: 40,
 		answer: "dedupeReply can mangle JSON",
@@ -55,15 +56,27 @@ describe("renderRecap", () => {
 		refs: [{ title: "clipcap.ts", url: "https://example.com/clipcap.ts" }],
 	};
 
-	test("orders the outcome between goal and ask", () => {
+	test("orders the merged request and outcome before ask", () => {
 		const markdown = renderRecap(recap);
-		expect(markdown.indexOf("- Goal: structured recap output")).toBeGreaterThan(-1);
-		expect(markdown.indexOf("- So far: dedupeReply can mangle JSON")).toBeGreaterThan(
-			markdown.indexOf("- Goal: structured recap output"),
-		);
-		expect(markdown.indexOf("- For you: pick schema field names")).toBeGreaterThan(
-			markdown.indexOf("- So far: dedupeReply can mangle JSON"),
-		);
+		const merged = "- Make the recap structured JSON → so far: dedupeReply can mangle JSON";
+		expect(markdown.indexOf(merged)).toBeGreaterThan(-1);
+		expect(markdown.indexOf("- For you: pick schema field names")).toBeGreaterThan(markdown.indexOf(merged));
+		expect(markdown).not.toContain("So far:");
+	});
+
+	test("merges request with the outcome, keeping the so-far cue until done", () => {
+		const reply = '{"title": "T", "request": "Ship it", "answer": "Shipped"}';
+		expect(replayRecap(reply, "done")?.markdown).toBe("- Ship it → Shipped");
+		expect(replayRecap(reply, "active")?.markdown).toBe("- Ship it → so far: Shipped");
+	});
+
+	test("shows Goal only in the details view, which it alone unlocks", () => {
+		expect(renderRecap(recap)).not.toContain("Goal");
+		expect(renderRecap(recap, true)).toContain("- Goal: structured recap output");
+		const replay = replayRecap('{"title": "T", "request": "Verify PR 366", "goal": "ship safely"}');
+		expect(replay?.markdown).toBe("- You asked: Verify PR 366");
+		expect(replay?.expanded).toBe("- You asked: Verify PR 366\n- Goal: ship safely");
+		expect(replay?.extras).toEqual(["goal"]);
 	});
 
 	test("hides I did whenever Result is present", () => {
@@ -77,7 +90,7 @@ describe("renderRecap", () => {
 	test("caps notes, appends refs, and lists working-on items", () => {
 		const markdown = renderRecap(recap, true);
 		expect(markdown).toContain("- one\n- two\n- [clipcap.ts](https://example.com/clipcap.ts)");
-		expect(markdown).toContain("- So far: dedupeReply can mangle JSON");
+		expect(markdown).toContain("- Make the recap structured JSON → so far: dedupeReply can mangle JSON");
 		expect(markdown).not.toContain("- three");
 		expect(markdown).toContain("**Working on:**\n- rewrite RECAP_PROMPT\n- add renderer");
 	});

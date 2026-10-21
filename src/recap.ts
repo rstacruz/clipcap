@@ -8,6 +8,7 @@ Reply with one JSON object and nothing else. Omit any field you have nothing to 
 {
   "kind": "implement",
   "title": "Make clipcap emit structured recaps",
+  "request": "Make the recap structured JSON",
   "goal": "structured recap output",
   "progress": 40,
   "answer": "dedupeReply can mangle JSON",
@@ -21,6 +22,7 @@ Reply with one JSON object and nothing else. Omit any field you have nothing to 
 - blocked: true only when you need user input to fulfill the goal; pair it with ask. Omit otherwise.
 - kind: debug, plan, answer (simple questions), investigate, research, review, triage, implement (when fresh), refine (when working on existing code), merge, deploy, monitor. Omit if not clear; the renderer picks the right tense.
 - title: 5 words max. If kind=answer, phrase as question.
+- request: the user's requests before this recap; look at last 3 (6 words max)
 - goal: 7 words max. Omit when the title already states it.
 - progress: 0-100, gut feel. Omit when done.
 - answer: the outcome the convo is heading to — a direct answer when it answers a question, the finding when it investigates. 7 words max. Omit when not applicable.
@@ -37,6 +39,8 @@ export interface Recap {
 	blocked?: boolean;
 	kind?: string;
 	title?: string;
+	/** User's latest request, summarised */
+	request?: string;
 	goal?: string;
 	progress?: number;
 	/** Question outcome or investigation finding */
@@ -55,10 +59,10 @@ export type AssumedStatus = "active" | "done";
 export type RecapStatus = AssumedStatus | "blocked";
 
 /** Fields the compact panel renders, in order */
-const COMPACT_FIELDS = ["title", "goal", "answer", "did", "ask"];
+const COMPACT_FIELDS = ["title", "request", "answer", "did", "ask"];
 
 /** Details view fields, in order */
-const DETAIL_FIELDS = ["note", "next", "refs"];
+const DETAIL_FIELDS = ["goal", "note", "next", "refs"];
 
 const NOTE_LIMIT = 2;
 const NEXT_LIMIT = 2;
@@ -86,6 +90,7 @@ const KIND_LABELS: Record<string, [string, string]> = {
 };
 
 const CAPTIONS: Record<string, string> = {
+	request: "You asked",
 	goal: "Goal",
 	answer: "Result",
 	did: "I did",
@@ -188,10 +193,14 @@ function buildRecap(recap: Recap, revealAll: boolean, assumed: AssumedStatus) {
 		...notes.map((text): string | undefined => `- ${escapeMarkdown(text)}`),
 		...(fields.includes(SUMMARY_SLOT) ? linkedRefs.map((ref): string | undefined => `- ${ref}`) : []),
 	].filter((block): block is string => block !== undefined);
+	const request = trimField(recap.request) && escapeMarkdown(trimField(recap.request) ?? "");
+	const answer = trimField(recap.answer) && escapeMarkdown(trimField(recap.answer) ?? "");
 	const answerCaption = status === "done" ? CAPTIONS.answer : "So far";
+	const outcome = answer && (status === "done" ? answer : `so far: ${answer}`);
 	const sections: Record<string, string | undefined> = {
+		request: request && (outcome ? `- ${request} → ${outcome}` : `- ${CAPTIONS.request}: ${request}`),
 		goal: trimField(recap.goal) && `- ${CAPTIONS.goal}: ${escapeMarkdown(trimField(recap.goal) ?? "")}`,
-		answer: trimField(recap.answer) && `- ${answerCaption}: ${escapeMarkdown(trimField(recap.answer) ?? "")}`,
+		answer: request ? undefined : answer && `- ${answerCaption}: ${answer}`,
 		did: !did || (!revealAll && trimField(recap.answer)) ? undefined : `- ${CAPTIONS.did}: ${escapeMarkdown(did)}`,
 		ask:
 			trimField(recap.ask) && (revealAll || wantsUser)

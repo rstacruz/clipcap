@@ -11,7 +11,7 @@ A dim panel above the editor that recaps the conversation: on demand, once the s
 ```text
 ╭👀╮ ╭───────────────────────────────────────────────────────────────────────────────────╮
 │╭╮│ │ Implementing: Wire recap into the panel                         ━━━━━━━━━┄ 20m ⌛ │
-││││ │ - Goal: one glance tells you where the session stands                             │
+││││ │ - You asked: show where the session stands                                        │
 ││││ │ - I did: split the prompt, renderer, and lifecycle                                │
 ╰─╯  ╰─────────────────────────────────────────────────── esc: dismiss · ctrl-h: more ───╯
 ──────────────────────────────────────────────────────────────────────────────────────────
