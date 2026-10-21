@@ -33,7 +33,6 @@ Restart omp after installing.
 ## Usage
 
 - `/clipcap` — recap now.
-- `/clipcap <focus>` — recap with extra focus, e.g. `/clipcap focus on the failing tests`.
 - Shows up on its own after 5s of quiet, and 5s into a long turn; mid-work recaps refresh every 3–15 minutes by elapsed time.
 - `esc` — dismiss (cancels an asked recap while it runs).
 - `ctrl-h` — toggle details, when the recap has more to show.
