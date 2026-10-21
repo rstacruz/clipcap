@@ -3,7 +3,7 @@
 	"version": "0.1.0",
 	"description": "Recap the conversation: a live panel on demand, when idle, and mid-work",
 	"type": "module",
-	"main": "clipcap.ts",
+	"main": "src/clipcap.ts",
 	"license": "MIT",
 	"author": "Rico Sta. Cruz",
 	"repository": {
@@ -31,6 +31,6 @@
 		"typescript": "6.0.3"
 	},
 	"omp": {
-		"extensions": ["./clipcap.ts"]
+		"extensions": ["./src/clipcap.ts"]
 	}
 }

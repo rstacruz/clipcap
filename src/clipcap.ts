@@ -9,16 +9,13 @@ function envDelayMs(name: string, fallbackSeconds: number): number {
 	return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0;
 }
 
-/** Idle recap delay; 0 or unparsable disables */
 const IDLE_MS = envDelayMs("OMP_CLIPCAP_IDLE_SECONDS", 5);
 
-/** Delay before a mid-work recap starts */
 const AUTO_MS = envDelayMs("OMP_CLIPCAP_AUTO_SECONDS", 5);
 
-/** Widget slot for the recap block */
 const RECAP_WIDGET = "clipcap:recap";
 
-/** Last band: covers everything past the earlier bands */
+/** Fallback band past the earlier bands */
 const LAST_BAND: { untilMin: number; everyMin: number } = { untilMin: Number.POSITIVE_INFINITY, everyMin: 15 };
 
 /** Refresh cadence by time worked; first band where elapsed < untilMin wins */
@@ -29,26 +26,22 @@ const REFRESH_SCHEDULE: readonly { untilMin: number; everyMin: number }[] = [
 	LAST_BAND,
 ];
 
-/** Delay until the next mid-work recap, given time worked so far */
 function refreshDelayMs(elapsedMs: number): number {
 	const min = elapsedMs / 60_000;
 	const band = REFRESH_SCHEDULE.find(b => min < b.untilMin) ?? LAST_BAND;
 	return band.everyMin * 60_000;
 }
 
-/** Countdown repaint interval during a refresh */
 const REPAINT_INTERVAL_MS = 30_000;
 
-/** Dismissal hint, first in the footer */
+/** Footer hint, first */
 const DISMISS_HINT = "esc: dismiss";
 
-/** Footer hint while an asked recap is still running */
 const CANCEL_HINT: WidthVariants = { full: "esc: cancel", brief: "esc: cancel" };
 
-/** Key that swaps the recap panel between its compact and details views */
 const DETAILS_KEY = process.env.OMP_CLIPCAP_KEY ?? "ctrl-h";
 
-/** Ctrl+<letter> arrives as its control byte on legacy terminals, CSI <cp>;5u under kitty's protocol */
+/** Ctrl+<letter>: control byte on legacy terminals, CSI <cp>;5u in kitty */
 function detailsKeys(key: string): string[] {
 	const letter = /^ctrl\s*[+-]?\s*(\w)$/i.exec(key.trim())?.[1];
 	if (!letter) return [];
@@ -56,34 +49,28 @@ function detailsKeys(key: string): string[] {
 	return [String.fromCharCode(code & 0x1f), `\x1b[${code};5u`];
 }
 
-/** Byte sequences the details key arrives as */
 const DETAILS_KEYS = detailsKeys(DETAILS_KEY);
 
-/** Whether the panel currently shows the details view */
 let detailsShown = false;
 
-/** Expanded-only fields the shown recap carries; none means no details toggle */
+/** Expanded fields; empty means no details toggle */
 let detailsExtras: string[] = [];
 
-/** Start of the current turn; undefined while no turn is in flight */
 let workStartedAt: number | undefined;
 
-/** How long the last turn ran; what a settled header hint reports as its elapsed time */
 let settledWorkMs: number | undefined;
 
-/** Elapsed time worked: live mid-turn, frozen once it ends, absent without a turn */
+/** Live mid-turn, frozen after, empty without a turn */
 function elapsedPhrase(): string {
 	if (workStartedAt !== undefined) return formatElapsed(Date.now() - workStartedAt);
 	return settledWorkMs === undefined ? "" : formatElapsed(settledWorkMs);
 }
 
-/** Same text in a roomy (`full`) and a tight (`brief`) form */
 interface WidthVariants {
 	full: string;
 	brief: string;
 }
 
-/** Footer hint: dismissal, plus the details toggle when the recap has more to show */
 function recapHint(): WidthVariants {
 	const details = detailsExtras.length > 0 ? `${DETAILS_KEY}: ${detailsShown ? "less" : "more"}` : "";
 	return { full: [DISMISS_HINT, details].filter(Boolean).join(" · "), brief: DISMISS_HINT };
@@ -98,7 +85,6 @@ function formatElapsed(ms: number): string {
 	return rest ? `${Math.floor(minutes / 60)}h ${rest}m` : `${minutes / 60}h`;
 }
 
-/** Host that supports side turns */
 type SideTurnHost = ExtensionContext & { runEphemeralTurn: NonNullable<ExtensionContext["runEphemeralTurn"]> };
 
 function hasSideTurn(ctx: ExtensionContext): ctx is SideTurnHost {
@@ -107,7 +93,7 @@ function hasSideTurn(ctx: ExtensionContext): ctx is SideTurnHost {
 
 /** Main session in the TUI */
 function canPaintRecap(ctx: ExtensionContext): boolean {
-	// Subagent sessions are rebound to this factory too, without a real UI.
+	// Subagent sessions load this factory too, without a UI
 	return ctx.agent.kind === "main" && ctx.mode === "tui";
 }
 
@@ -121,13 +107,11 @@ function isQuiet(ctx: ExtensionContext): boolean {
 	return sessionSettled(ctx) && !ctx.ui.getEditorText().trim();
 }
 
-/** Columns between a title and whatever follows it */
 const HEADER_GAP = 2;
 
-/** Meter cells; ten keeps each cell at 10% */
 const METER_CELLS = 10;
 
-/** Title flush left, progress/time/glyph flush right; the tail sheds its meter before wrapping below */
+/** Title left; meter, time, glyph right */
 export class HeaderRow implements Component {
 	constructor(
 		private readonly title: string,
@@ -144,7 +128,6 @@ export class HeaderRow implements Component {
 			if (!tail) return [truncateToWidth(this.title, width)];
 			if (!this.title) return [`${" ".repeat(Math.max(0, width - tailWidth))}${tail}`];
 			const room = width - tailWidth - HEADER_GAP;
-			// Too tight to share a row: try the narrow tail, then drop below the title.
 			if (room < Math.min(titleWidth, width / 3)) continue;
 			const fitted = truncateToWidth(this.title, room);
 			return [`${fitted}${" ".repeat(width - visibleWidth(fitted) - tailWidth)}${tail}`];
@@ -154,10 +137,9 @@ export class HeaderRow implements Component {
 	}
 }
 
-/** Rule cells kept after the hint on the bottom border */
 const HINT_TAIL_CELLS = 3;
 
-/** Rounded frame around `child`, one column of padding inside each side; the hint rides the bottom rule */
+/** Rounded frame; hint rides the bottom rule */
 class RoundedFrame implements Component {
 	constructor(
 		private readonly child: Component,
@@ -169,7 +151,6 @@ class RoundedFrame implements Component {
 		this.child.invalidate?.();
 	}
 
-	/** Bottom rule with the hint right-aligned and three rule cells before the trailing corner */
 	private bottom(rule: number): string {
 		const fits = (text: string) => visibleWidth(text) + 2 + HINT_TAIL_CELLS <= rule;
 		const hint = [this.hint.full, this.hint.brief].find(fits);
@@ -179,7 +160,6 @@ class RoundedFrame implements Component {
 	}
 
 	render(width: number): readonly string[] {
-		// Too narrow for side borders plus padding: render unframed.
 		if (width < 5) return this.child.render(width);
 		const inner = width - 4;
 		const left = this.paint("│ ");
@@ -192,13 +172,12 @@ class RoundedFrame implements Component {
 	}
 }
 
-/** Mascot rows: head, shoulders, legs (repeated to fill), feet; each 4 columns wide */
+/** Mascot rows: head, shoulders, legs, feet */
 const MASCOT = { head: "╭👀╮", shoulders: "│╭╮│", legs: "││││", feet: "╰─╯ " };
 
-/** Columns the mascot takes, including the gap before the child */
 const MASCOT_WIDTH = visibleWidth(MASCOT.head) + 1;
 
-/** Mascot left of `child`, its head on the child's first row and feet on its last */
+/** Mascot left of child; head first row, feet last */
 class MascotGutter implements Component {
 	constructor(
 		private readonly child: Component,
@@ -210,7 +189,6 @@ class MascotGutter implements Component {
 	}
 
 	render(width: number): readonly string[] {
-		// Too narrow to spare the gutter: render the child alone.
 		if (width < MASCOT_WIDTH * 3) return this.child.render(width);
 		const rows = this.child.render(width - MASCOT_WIDTH);
 		const last = rows.length - 1;
@@ -221,14 +199,12 @@ class MascotGutter implements Component {
 	}
 }
 
-/** Header tone by effective status: settled green, in flight accent, blocked warning */
 const HEADING_TONE: Record<RecapStatus, ThemeColor> = {
 	done: "success",
 	active: "accent",
 	blocked: "warning",
 };
 
-/** Everything the recap panel needs to paint */
 interface PanelView {
 	title: string;
 	body: string;
@@ -239,12 +215,12 @@ interface PanelView {
 	updating?: boolean;
 }
 
-/** Paint the recap panel above the editor: header row and markdown body in a rounded frame, mascot alongside */
+/** Recap panel above the editor */
 function showRecapPanel(ctx: ExtensionContext, view: PanelView): void {
 	ctx.ui.setWidget(RECAP_WIDGET, (_tui, theme) => {
 		const dim = (text: string) => theme.fg("dim", text);
 		const tone = view.status ? HEADING_TONE[view.status] : "thinkingText";
-		// Keep one empty cell while work is in flight so the meter never reads as full.
+		// Leave one empty cell so the meter never reads full
 		const filled = view.progress === undefined
 			? 0
 			: Math.min(METER_CELLS - 1, Math.max(1, Math.round((view.progress / 100) * METER_CELLS)));
@@ -254,7 +230,7 @@ function showRecapPanel(ctx: ExtensionContext, view: PanelView): void {
 		const elapsed = [elapsedPhrase(), view.updating && "(updating…)"].filter(Boolean).join(" ");
 		const tail = [elapsed && dim(elapsed), view.icon].filter(Boolean).join(" ");
 		const panel = new Container();
-		// Styling an empty title would leave escape codes HeaderRow mistakes for a title.
+		// Styling an empty title leaves escape codes HeaderRow reads as a title
 		panel.addChild(
 			new HeaderRow(view.title && theme.fg(tone, view.title), {
 				full: [meter, tail].filter(Boolean).join(" "),
@@ -271,7 +247,7 @@ function showRecapPanel(ctx: ExtensionContext, view: PanelView): void {
 	});
 }
 
-/** Shows `replay`, updating the toggle state; `keepDetails` preserves an expanded panel */
+/** Shows replay; keepDetails preserves an expanded panel */
 function activatePanel(current: ExtensionContext, replay: Replay, keepDetails: boolean, updating = false): void {
 	detailsExtras = replay.extras ?? [];
 	if (!keepDetails) detailsShown = false;
@@ -288,7 +264,6 @@ function activatePanel(current: ExtensionContext, replay: Replay, keepDetails: b
 
 type RecapMode = "idle" | "asked" | "refresh" | "auto";
 
-/** Whether a recap is still wanted after its side turn returns */
 function recapStillWanted(mode: RecapMode, current: ExtensionContext): boolean {
 	if (!canPaintRecap(current)) return false;
 	if (mode === "idle") return isQuiet(current);
@@ -299,7 +274,7 @@ function recapStillWanted(mode: RecapMode, current: ExtensionContext): boolean {
 /** In-flight recap; a new run supersedes it */
 interface RecapRunner {
 	run(ctx: SideTurnHost, promptText: string, mode: RecapMode, assumed: AssumedStatus): Promise<Replay | undefined>;
-	/** Abort the in-flight recap; `userActivity` spares asked ones */
+	/** userActivity spares asked recaps */
 	cancel(userActivity: boolean): void;
 	busy(): boolean;
 }
@@ -330,7 +305,7 @@ function recapRunner(): RecapRunner {
 			const { replyText } = await current.runEphemeralTurn({
 				promptText,
 				signal: abort.signal,
-				// The reply is one JSON object: line collapsing or the byte cap could mangle it.
+				// The reply is one JSON object; line collapsing or the byte cap could mangle it
 				dedupeReply: false,
 				replyMaxBytes: Number.POSITIVE_INFINITY,
 			});
@@ -357,25 +332,20 @@ function recapRunner(): RecapRunner {
 	return { run, cancel, busy: () => running !== undefined };
 }
 
-/** Refreshes a mid-work recap until the session settles */
 interface RecapRefresher {
-	/** Show `replay` and refresh it while working */
 	start(ctx: SideTurnHost, promptText: string, replay: Replay): void;
-	/** Stop refreshing and forget the block; /clipcap repaints it */
+	/** Stop refreshing; /clipcap repaints the block */
 	stop(): void;
 }
 
-/** Recap block on screen; `promptText` re-runs it */
 interface ShownRecap {
 	promptText: string;
 	replay: Replay;
 }
 
-/** Countdown to the next refresh of a shown recap */
 interface RefreshState {
 	shown: ShownRecap;
 	nextAt: number;
-	/** Pending repaint or refresh timer */
 	timer?: { cancel(): void };
 }
 
@@ -383,15 +353,10 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapRefreshe
 	const idleEnabled = IDLE_MS > 0;
 
 	let ctx: ExtensionContext | undefined;
-	/** Idle window timer */
 	let clock: { cancel(): void } | undefined;
-	/** Timer that starts a mid-work recap */
 	let autoClock: { cancel(): void } | undefined;
-	/** Idle recap is due */
 	let armed = false;
-	/** Recap block on screen, if any */
 	let shown: ShownRecap | undefined;
-	/** Countdown for `shown` while the agent works */
 	let refresh: RefreshState | undefined;
 
 	const stopClock = () => {
@@ -419,7 +384,6 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapRefreshe
 		activatePanel(current, state.shown.replay, true, updating);
 	};
 
-	/** Repaint the countdown; re-run the recap when due */
 	const scheduleTick = (current: ExtensionContext, state: RefreshState) => {
 		const id = current.setTimeout(() => void tick(state), REPAINT_INTERVAL_MS);
 		state.timer = { cancel: () => current.clearTimer(id) };
@@ -468,7 +432,6 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapRefreshe
 		shown = undefined;
 	};
 
-	/** Re-run the shown recap once the turn ends */
 	const finalRefresh = async (current: ExtensionContext, state: ShownRecap): Promise<void> => {
 		if (!hasSideTurn(current)) {
 			activatePanel(current, state.replay, true);
@@ -541,7 +504,6 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapRefreshe
 		hidePanel(sessionCtx);
 		sessionCtx.ui.onTerminalInput(data => {
 			const escape = data === "\x1b" || data === "\x1b[27u";
-			// The details toggle needs a panel with more to show; otherwise the key is ordinary activity.
 			if (DETAILS_KEYS.includes(data) && shown && detailsExtras.length > 0) {
 				detailsShown = !detailsShown;
 				activatePanel(sessionCtx, shown.replay, true);

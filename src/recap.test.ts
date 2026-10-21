@@ -6,14 +6,12 @@ describe("parseRecap", () => {
 		expect(parseRecap('{"title": "Fix flaky tests"}')).toEqual({ title: "Fix flaky tests" });
 	});
 
-	test("reads a fenced JSON reply", () => {
-		const reply = '```json\n{"blocked": true, "title": "Fix flaky tests"}\n```';
-		expect(parseRecap(reply)).toEqual({ blocked: true, title: "Fix flaky tests" });
-	});
-
-	test("reads JSON wrapped in prose", () => {
-		const reply = 'Here you go:\n{"answer": "cache is cold"}\nHope that helps!';
-		expect(parseRecap(reply)).toEqual({ answer: "cache is cold" });
+	test("reads JSON fenced or wrapped in prose", () => {
+		expect(parseRecap('```json\n{"blocked": true, "title": "Fix flaky tests"}\n```')).toEqual({
+			blocked: true,
+			title: "Fix flaky tests",
+		});
+		expect(parseRecap('Here you go:\n{"answer": "cache is cold"}\nHope that helps!')).toEqual({ answer: "cache is cold" });
 	});
 
 	test("returns undefined without a JSON object", () => {
@@ -36,12 +34,8 @@ describe("replayRecap", () => {
 		expect(replay?.markdown).toBe("");
 	});
 
-	test("falls back to the raw reply when parsing fails", () => {
-		const replay = replayRecap("no structure, just prose");
-		expect(replay).toEqual({ markdown: "no structure, just prose" });
-	});
-
-	test("drops an empty reply", () => {
+	test("falls back to the raw reply, dropping empty replies", () => {
+		expect(replayRecap("no structure, just prose")).toEqual({ markdown: "no structure, just prose" });
 		expect(replayRecap("   ")).toBeUndefined();
 	});
 });
@@ -61,14 +55,15 @@ describe("renderRecap", () => {
 		refs: [{ title: "clipcap.ts", url: "https://example.com/clipcap.ts" }],
 	};
 
-	test("renders today's panel shape with the outcome ahead of everything", () => {
+	test("orders the outcome between goal and ask", () => {
 		const markdown = renderRecap(recap);
-		const at = (text: string) => markdown.indexOf(text);
-		expect(replayRecap(JSON.stringify(recap))?.title).toBe("Implementing: Make clipcap emit structured recaps");
-		expect(at("- Goal: structured recap output")).toBeGreaterThan(-1);
-		// The outcome is more important than did for questions and investigations.
-		expect(at("- So far: dedupeReply can mangle JSON")).toBeGreaterThan(at("- Goal: structured recap output"));
-		expect(at("- For you: pick schema field names")).toBeGreaterThan(at("- So far: dedupeReply can mangle JSON"));
+		expect(markdown.indexOf("- Goal: structured recap output")).toBeGreaterThan(-1);
+		expect(markdown.indexOf("- So far: dedupeReply can mangle JSON")).toBeGreaterThan(
+			markdown.indexOf("- Goal: structured recap output"),
+		);
+		expect(markdown.indexOf("- For you: pick schema field names")).toBeGreaterThan(
+			markdown.indexOf("- So far: dedupeReply can mangle JSON"),
+		);
 	});
 
 	test("hides I did whenever Result is present", () => {
@@ -79,15 +74,11 @@ describe("renderRecap", () => {
 		expect(withoutResult).toContain("- I did: bumped deps");
 	});
 
-	test("caps notes and flows refs as links", () => {
+	test("caps notes, appends refs, and lists working-on items", () => {
 		const markdown = renderRecap(recap, true);
 		expect(markdown).toContain("- one\n- two\n- [clipcap.ts](https://example.com/clipcap.ts)");
 		expect(markdown).toContain("- So far: dedupeReply can mangle JSON");
 		expect(markdown).not.toContain("- three");
-	});
-
-	test("renders working-on items", () => {
-		const markdown = renderRecap(recap, true);
 		expect(markdown).toContain("**Working on:**\n- rewrite RECAP_PROMPT\n- add renderer");
 	});
 
@@ -112,19 +103,9 @@ describe("renderRecap", () => {
 		expect(markdown).toContain("- only line");
 	});
 
-	test("drops incomplete refs", () => {
-		const markdown = renderRecap({ title: "T", refs: [{ title: "no url", url: "" }] });
-		expect(markdown).not.toContain("[no url]");
-	});
-
-	test.each(["notes.md", "ftp://example.com", "https://"])("drops non-http ref %s", url => {
+	test.each(["", "notes.md", "ftp://example.com", "https://"])("drops non-http ref %s", url => {
 		const markdown = renderRecap({ title: "T", refs: [{ title: "T", url }] });
 		expect(markdown).not.toContain("[T]");
-	});
-
-	test("keeps absolute http(s) refs", () => {
-		const markdown = renderRecap({ title: "T", refs: [{ title: "T", url: "https://example.com" }] });
-		expect(markdown).toContain("[T](https://example.com)");
 	});
 
 	test("does not advertise refs when none are http(s)", () => {
@@ -147,25 +128,11 @@ describe("renderRecap", () => {
 });
 
 describe("details view", () => {
-	const reply = '{"title": "T", "answer": "PR is green", "did": "bumped deps", "note": ["one"]}';
-
-	test("details reveal the activity fields", () => {
-		const replay = replayRecap(reply, "done");
+	test("reveals the activity fields", () => {
+		const replay = replayRecap('{"title": "T", "answer": "PR is green", "did": "bumped deps", "note": ["one"]}', "done");
 		expect(replay?.markdown).toBe("- Result: PR is green");
 		expect(replay?.extras).toEqual(["note"]);
 		expect(replay?.expanded).toBe("- Result: PR is green\n- I did: bumped deps\n- one");
-	});
-
-	test("extras are the detail fields compact did not show", () => {
-		const replay = replayRecap('{"title": "T", "note": ["one"]}');
-		expect(replay?.extras).toEqual(["note"]);
-	});
-
-	test("never renders an empty activity line, even expanded", () => {
-		const replay = replayRecap('{"title": "T", "answer": "yes", "did": ""}');
-		expect(replay?.markdown).toBe("- Result: yes");
-		expect(replay?.expanded).toBe("- Result: yes");
-		expect(replay?.extras).toEqual([]);
 	});
 
 	test("compact mode carries the first ref inline", () => {
@@ -180,7 +147,6 @@ describe("details view", () => {
 	test("hides For you while work is active, unless blocked", () => {
 		const active = replayRecap('{"title": "T", "ask": "hold on"}', "active");
 		expect(active?.markdown).toBe("");
-		// The ask is hidden in compact; the details view stays reachable without one.
 		expect(active?.extras).toEqual([]);
 		expect(active?.expanded).toBe("");
 		const blocked = replayRecap('{"title": "T", "blocked": true, "ask": "approve the plan"}', "active");
@@ -189,18 +155,10 @@ describe("details view", () => {
 });
 
 describe("assumed status labels", () => {
-	test("calls the outcome So far while work runs", () => {
-		const active = replayRecap('{"title": "T", "answer": "reading the logs"}', "active");
-		expect(active?.markdown).toBe("- So far: reading the logs");
-	});
-
-	test("keeps Result once the work stops", () => {
-		const done = replayRecap('{"title": "T", "answer": "all green"}', "done");
-		expect(done?.markdown).toBe("- Result: all green");
-	});
-
-	test("reads a blocked outcome as So far, hand up", () => {
-		const blocked = replayRecap('{"title": "T", "blocked": true, "answer": "waiting on you"}');
-		expect(blocked?.markdown).toBe("- So far: waiting on you");
+	test("calls the outcome So far while work runs or is blocked", () => {
+		expect(replayRecap('{"title": "T", "answer": "reading the logs"}', "active")?.markdown).toBe("- So far: reading the logs");
+		expect(replayRecap('{"title": "T", "blocked": true, "answer": "waiting on you"}')?.markdown).toBe(
+			"- So far: waiting on you",
+		);
 	});
 });

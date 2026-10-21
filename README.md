@@ -59,4 +59,4 @@ bun run check
 omp plugin link .
 ```
 
-`bun run check` runs the typecheck and the unit tests. Restart omp after changing `clipcap.ts` or `recap.ts`.
+`bun run check` runs the typecheck and the unit tests. Restart omp after changing `src/clipcap.ts` or `src/recap.ts`.
