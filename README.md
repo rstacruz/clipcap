@@ -1,4 +1,10 @@
-# Clipcap: Compact live inline progress recap
+<br />
+
+<h1 align="center">Clipcap</h1>
+
+<p align="center"><strong>Compact live inline progress recap</strong></p>
+
+<br />
 
 A dim panel above the editor that recaps the conversation: on demand, once the session goes quiet, and on a refresh cadence while the agent works.
 
