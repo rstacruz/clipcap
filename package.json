@@ -1,0 +1,36 @@
+{
+	"name": "omp-clipcap",
+	"version": "0.1.0",
+	"description": "Recap the conversation: a live panel on demand, when idle, and mid-work",
+	"type": "module",
+	"main": "src/clipcap.ts",
+	"license": "MIT",
+	"author": "Rico Sta. Cruz",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/rstacruz/clipcap.git"
+	},
+	"homepage": "https://github.com/rstacruz/clipcap#readme",
+	"bugs": {
+		"url": "https://github.com/rstacruz/clipcap/issues"
+	},
+	"keywords": ["omp", "omp-plugin", "clipcap", "recap", "tui"],
+	"engines": {
+		"bun": ">=1.4.0",
+		"omp": ">=18.11.0"
+	},
+	"scripts": {
+		"test": "bun test",
+		"typecheck": "tsc --noEmit -p tsconfig.json",
+		"check": "bun run typecheck && bun test"
+	},
+	"devDependencies": {
+		"@oh-my-pi/pi-coding-agent": "18.11.0",
+		"@oh-my-pi/pi-tui": "18.11.0",
+		"@types/bun": "^1.4.3",
+		"typescript": "6.0.3"
+	},
+	"omp": {
+		"extensions": ["./src/clipcap.ts"]
+	}
+}
