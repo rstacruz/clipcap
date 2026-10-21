@@ -31,7 +31,7 @@ omp plugin install github:rstacruz/clipcap
 Pin a release:
 
 ```sh
-omp plugin install github:rstacruz/clipcap#v1.0.0
+omp plugin install github:rstacruz/clipcap#v0.1.0
 ```
 
 Restart omp after installing.

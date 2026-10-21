@@ -1,6 +1,6 @@
 {
 	"name": "omp-clipcap",
-	"version": "1.0.0",
+	"version": "0.1.0",
 	"description": "Recap the conversation: a live panel on demand, when idle, and mid-work",
 	"type": "module",
 	"main": "clipcap.ts",
