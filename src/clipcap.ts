@@ -416,10 +416,8 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapRefreshe
 	const startRefresh = (current: SideTurnHost, promptText: string, replay: Replay) => {
 		stopRefresh();
 		shown = { promptText, replay };
-		if (sessionSettled(current)) {
-			void finalRefresh(current, shown);
-			return;
-		}
+		// Settled already: the recap ran as done, and agent_end gives any later turn its final refresh
+		if (sessionSettled(current)) return;
 		ctx ??= current;
 		const state: RefreshState = { shown, nextAt: nextRefreshAt() };
 		refresh = state;
