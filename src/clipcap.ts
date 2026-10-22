@@ -447,7 +447,7 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapRefreshe
 		const current = ctx;
 		if (!current || !armed) return;
 		armed = false;
-		if (shown || !isQuiet(current)) return;
+		if (shown || recap.busy() || !isQuiet(current)) return;
 		if (!hasSideTurn(current)) {
 			current.ui.notify("/clipcap: this host has no runEphemeralTurn; idle recaps are off.", "warning");
 			return;
@@ -542,8 +542,9 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapRefreshe
 		ctx = sessionCtx;
 		recap.cancel(true);
 		hidePanel(sessionCtx);
-		armed = true;
-		restartClock();
+		// A submit that starts no turn (slash or bang command) must not arm; agent_end re-arms
+		armed = false;
+		stopClock();
 	});
 
 	return { start: startRefresh, stop: forgetPanel };
