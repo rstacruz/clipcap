@@ -177,7 +177,7 @@ class PanelFrame implements Component {
 			const fitted = truncateToWidth(line, inner);
 			return `${left}${fitted}${" ".repeat(Math.max(0, inner - visibleWidth(fitted)))}${right}`;
 		});
-		if (!rounded) return ["", ...rows, this.paint(`  ${hintRule(this.hint, inner, " ")}`)];
+		if (!rounded) return [...rows, this.paint(`  ${hintRule(this.hint, inner, " ")}`)];
 		return [this.paint(`╭${"─".repeat(width - 2)}╮`), ...rows, this.paint(`╰${hintRule(this.hint, width - 2, "─")}╯`)];
 	}
 }
@@ -203,7 +203,7 @@ class MascotGutter implements Component {
 		const rows = this.child.render(width - MASCOT_WIDTH);
 		const last = rows.length - 1;
 		return rows.map((row, i) => {
-			const part = i === 0 ? MASCOT.head : i === 1 ? MASCOT.shoulders : i === last ? MASCOT.feet : MASCOT.legs;
+			const part = i === 0 ? MASCOT.head : i === last ? MASCOT.feet : i === 1 ? MASCOT.shoulders : MASCOT.legs;
 			return `${this.paint(part)} ${row}`;
 		});
 	}
