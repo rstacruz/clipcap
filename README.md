@@ -9,11 +9,11 @@
 A dim panel above the editor that recaps the conversation: on demand, once the session goes quiet, and on a refresh cadence while the agent works.
 
 ```text
-╭👀╮ ╭───────────────────────────────────────────────────────────────────────────────────╮
-│╭╮│ │ Implementing: Wire recap into the panel                         ━━━━━━━━━┄ 20m ⌛ │
-││││ │ - You asked: show where the session stands                                        │
-││││ │ - I did: split the prompt, renderer, and lifecycle                                │
-╰─╯  ╰─────────────────────────────────────────────────── esc: dismiss · ctrl-h: more ───╯
+╭👀╮
+│╭╮│   Implementing: Wire recap into the panel                           ━━━━━━━━━┄ 20m ⌛
+││││   - You asked: show where the session stands
+││││   - I did: split the prompt, renderer, and lifecycle
+╰─╯                                                         esc: dismiss · ctrl-h: more
 ──────────────────────────────────────────────────────────────────────────────────────────
 ❯
 ──────────────────────────────────────────────────────────────────────────────────────────
@@ -50,6 +50,7 @@ Restart omp after installing.
 | `OMP_CLIPCAP_IDLE_SECONDS` | `5` | Quiet time before the idle recap; `0` disables |
 | `OMP_CLIPCAP_AUTO_SECONDS` | `5` | Delay before a mid-work recap; `0` disables |
 | `OMP_CLIPCAP_KEY` | `ctrl-h` | Key that toggles the details view |
+| `OMP_CLIPCAP_BORDER` | `none` | Panel border: `none` or `rounded` |
 
 ## Development
 

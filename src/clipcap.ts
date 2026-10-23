@@ -139,36 +139,46 @@ export class HeaderRow implements Component {
 
 const HINT_TAIL_CELLS = 3;
 
-/** Rounded frame; hint rides the bottom rule */
-class RoundedFrame implements Component {
+/** Panel border: `rounded` box, or `none` for bare padding */
+type BorderStyle = "rounded" | "none";
+
+/** Unknown values fall back to none */
+const BORDER: BorderStyle = process.env.OMP_CLIPCAP_BORDER?.trim().toLowerCase() === "rounded" ? "rounded" : "none";
+
+/** `rule` cells of fill; the hint sits right, HINT_TAIL_CELLS from the end */
+function hintRule(hint: WidthVariants, rule: number, fill: string): string {
+	const fits = (text: string) => visibleWidth(text) + 2 + HINT_TAIL_CELLS <= rule;
+	const text = [hint.full, hint.brief].find(fits);
+	return text
+		? `${fill.repeat(rule - visibleWidth(text) - 2 - HINT_TAIL_CELLS)} ${text} ${fill.repeat(HINT_TAIL_CELLS)}`
+		: fill.repeat(rule);
+}
+
+/** Padded child; hint rides the bottom row, a rule when rounded */
+class PanelFrame implements Component {
 	constructor(
 		private readonly child: Component,
 		private readonly paint: (text: string) => string,
 		private readonly hint: WidthVariants,
+		private readonly border: BorderStyle,
 	) { }
 
 	invalidate(): void {
 		this.child.invalidate?.();
 	}
 
-	private bottom(rule: number): string {
-		const fits = (text: string) => visibleWidth(text) + 2 + HINT_TAIL_CELLS <= rule;
-		const hint = [this.hint.full, this.hint.brief].find(fits);
-		return hint
-			? `${"─".repeat(rule - visibleWidth(hint) - 2 - HINT_TAIL_CELLS)} ${hint} ${"─".repeat(HINT_TAIL_CELLS)}`
-			: "─".repeat(rule);
-	}
-
 	render(width: number): readonly string[] {
 		if (width < 5) return this.child.render(width);
-		const inner = width - 4;
-		const left = this.paint("│ ");
-		const right = this.paint(" │");
+		const rounded = this.border === "rounded";
+		const inner = width - (rounded ? 4 : 2);
+		const left = this.paint(rounded ? "│ " : "  ");
+		const right = rounded ? this.paint(" │") : "";
 		const rows = this.child.render(inner).map(line => {
 			const fitted = truncateToWidth(line, inner);
 			return `${left}${fitted}${" ".repeat(Math.max(0, inner - visibleWidth(fitted)))}${right}`;
 		});
-		return [this.paint(`╭${"─".repeat(width - 2)}╮`), ...rows, this.paint(`╰${this.bottom(width - 2)}╯`)];
+		if (!rounded) return ["", ...rows, this.paint(`  ${hintRule(this.hint, inner, " ")}`)];
+		return [this.paint(`╭${"─".repeat(width - 2)}╮`), ...rows, this.paint(`╰${hintRule(this.hint, width - 2, "─")}╯`)];
 	}
 }
 
@@ -243,7 +253,7 @@ function showRecapPanel(ctx: ExtensionContext, view: PanelView): void {
 			})
 			: undefined;
 		if (body) panel.addChild(body);
-		return new MascotGutter(new RoundedFrame(panel, dim, view.hint), dim);
+		return new MascotGutter(new PanelFrame(panel, dim, view.hint, BORDER), dim);
 	});
 }
 
