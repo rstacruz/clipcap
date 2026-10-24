@@ -139,7 +139,7 @@ export class HeaderRow implements Component {
 
 const HINT_TAIL_CELLS = 3;
 
-/** Panel border: `rounded` box, or `none` for bare padding */
+/** Panel border: `rounded` box, or `none` for bare content */
 type BorderStyle = "rounded" | "none";
 
 /** Unknown values fall back to none */
@@ -170,14 +170,14 @@ class PanelFrame implements Component {
 	render(width: number): readonly string[] {
 		if (width < 5) return this.child.render(width);
 		const rounded = this.border === "rounded";
-		const inner = width - (rounded ? 4 : 2);
-		const left = this.paint(rounded ? "│ " : "  ");
+		const inner = width - (rounded ? 4 : 0);
+		const left = rounded ? this.paint("│ ") : "";
 		const right = rounded ? this.paint(" │") : "";
 		const rows = this.child.render(inner).map(line => {
 			const fitted = truncateToWidth(line, inner);
 			return `${left}${fitted}${" ".repeat(Math.max(0, inner - visibleWidth(fitted)))}${right}`;
 		});
-		if (!rounded) return [...rows, this.paint(`  ${hintRule(this.hint, inner, " ")}`)];
+		if (!rounded) return [...rows, this.paint(hintRule(this.hint, inner, " "))];
 		return [this.paint(`╭${"─".repeat(width - 2)}╮`), ...rows, this.paint(`╰${hintRule(this.hint, width - 2, "─")}╯`)];
 	}
 }
