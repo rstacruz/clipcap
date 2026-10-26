@@ -120,11 +120,11 @@ const HEADER_GAP = 2;
 
 const METER_CELLS = 10;
 
-/** Title left; meter, time, glyph right. The title is read per render */
+/** Title left; meter, time, glyph right. Both are read per render, so the clock stays live */
 export class HeaderRow implements Component {
 	constructor(
 		private readonly title: () => string,
-		private readonly tail: WidthVariants,
+		private readonly tail: () => WidthVariants,
 	) { }
 
 	invalidate(): void { }
@@ -132,7 +132,8 @@ export class HeaderRow implements Component {
 	render(width: number): readonly string[] {
 		const title = this.title();
 		const titleWidth = visibleWidth(title);
-		for (const source of [this.tail.full, this.tail.brief]) {
+		const variants = this.tail();
+		for (const source of [variants.full, variants.brief]) {
 			const tail = truncateToWidth(source, width);
 			const tailWidth = visibleWidth(tail);
 			if (!tail) return [truncateToWidth(title, width)];
@@ -142,7 +143,7 @@ export class HeaderRow implements Component {
 			const fitted = truncateToWidth(title, room);
 			return [`${fitted}${" ".repeat(width - visibleWidth(fitted) - tailWidth)}${tail}`];
 		}
-		const tail = truncateToWidth(this.tail.brief, width);
+		const tail = truncateToWidth(variants.brief, width);
 		return [truncateToWidth(title, width), `${" ".repeat(Math.max(0, width - visibleWidth(tail)))}${tail}`];
 	}
 }
@@ -265,7 +266,10 @@ function showPanel(ctx: ExtensionContext, view: PanelView): void {
 		const meter = view.progress === undefined
 			? ""
 			: `${theme.fg(tone, "━".repeat(filled))}${theme.fg("dim", "┄".repeat(METER_CELLS - filled))}`;
-		const elapsed = [elapsedPhrase(), view.updating && "(updating…)"].filter(Boolean).join(" ");
+		const elapsed = () => {
+			const text = [elapsedPhrase(), view.updating && "(updating…)"].filter(Boolean).join(" ");
+			return text && dim(text);
+		};
 		if (viewMode === "compact") {
 			return new CompactRow(width => {
 				const parts = view.compact();
@@ -277,7 +281,7 @@ function showPanel(ctx: ExtensionContext, view: PanelView): void {
 						request: parts.request && dim(parts.request),
 						outcome: parts.outcome && theme.fg("thinkingText", parts.outcome),
 						meter,
-						elapsed: elapsed && dim(elapsed),
+						elapsed: elapsed(),
 						hint: view.hint.brief && dim(view.hint.brief),
 					},
 					width,
@@ -285,7 +289,6 @@ function showPanel(ctx: ExtensionContext, view: PanelView): void {
 				);
 			});
 		}
-		const tail = [elapsed && dim(elapsed), view.icon].filter(Boolean).join(" ");
 		const panel = new Container();
 		panel.addChild(
 			new HeaderRow(
@@ -294,7 +297,10 @@ function showPanel(ctx: ExtensionContext, view: PanelView): void {
 					// Styling an empty title leaves escape codes HeaderRow reads as a title
 					return title && theme.fg(tone, title);
 				},
-				{ full: [meter, tail].filter(Boolean).join(" "), brief: tail },
+				() => {
+					const tail = [elapsed(), view.icon].filter(Boolean).join(" ");
+					return { full: [meter, tail].filter(Boolean).join(" "), brief: tail };
+				},
 			),
 		);
 		const body = view.body
