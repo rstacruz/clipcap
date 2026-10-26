@@ -562,6 +562,13 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapLifecycl
 		}
 		// A newer /clipcap or input owns the panel now
 		if (panel !== asking) return;
+		// agent_end skipped its follow-up while the asked recap ran; catch up now
+		const settled = sessionSettled(current);
+		if (previous.kind === "recap" && settled && previous.shown.replay.status === "active") {
+			panel = previous;
+			void finalRefresh(current, previous.shown);
+			return;
+		}
 		// A recap restored mid-turn resumes its refresh cadence
 		if (previous.kind === "recap") {
 			startRefresh(current, previous.shown.promptText, previous.shown.replay);
@@ -569,6 +576,10 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapLifecycl
 		}
 		panel = previous;
 		paint(current);
+		if (previous.kind === "pending" && settled) {
+			armed = true;
+			restartClock();
+		}
 	};
 
 	/** An idle or auto recap is wanted only before this turn has one */
