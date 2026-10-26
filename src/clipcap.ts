@@ -632,9 +632,9 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapLifecycl
 				paint(sessionCtx);
 				return { consume: true };
 			}
-			// esc cancels an asked recap too; ask() then restores the previous view
+			// esc cancels only an asked recap, which ask() then restores; refreshes run on so the recap stays current
 			const escape = data === "\x1b" || data === "\x1b[27u";
-			recap.cancel(!escape);
+			recap.cancel(!(escape && panel.kind === "recapping"));
 			restartClock();
 		});
 	};
