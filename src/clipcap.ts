@@ -244,6 +244,8 @@ const GREETING_ICON = "👋";
 interface PanelView {
 	/** Read per render, so the greeting tracks the clock */
 	title: () => string;
+	/** Accent lead-in before the title, e.g. `You asked:` */
+	label?: string;
 	body: string;
 	hint: WidthVariants;
 	status?: RecapStatus;
@@ -259,6 +261,7 @@ function showPanel(ctx: ExtensionContext, view: PanelView): void {
 	ctx.ui.setWidget(RECAP_WIDGET, (_tui, theme) => {
 		const dim = (text: string) => theme.fg("dim", text);
 		const tone = view.status ? HEADING_TONE[view.status] : "thinkingText";
+		const label = view.label ? `${theme.fg("accent", view.label)} ` : "";
 		// Leave one empty cell so the meter never reads full
 		const filled = view.progress === undefined
 			? 0
@@ -277,7 +280,7 @@ function showPanel(ctx: ExtensionContext, view: PanelView): void {
 					{
 						icon: parts.icon,
 						// Styling an empty title leaves escape codes that read as a title
-						title: parts.title && theme.fg(tone, parts.title),
+						title: parts.title && `${label}${theme.fg(tone, parts.title)}`,
 						request: parts.request && dim(parts.request),
 						outcome: parts.outcome && theme.fg("thinkingText", parts.outcome),
 						meter,
@@ -295,7 +298,7 @@ function showPanel(ctx: ExtensionContext, view: PanelView): void {
 				() => {
 					const title = view.title();
 					// Styling an empty title leaves escape codes HeaderRow reads as a title
-					return title && theme.fg(tone, title);
+					return title && `${label}${theme.fg(tone, title)}`;
 				},
 				() => {
 					const tail = [elapsed(), view.icon].filter(Boolean).join(" ");
@@ -342,13 +345,14 @@ function paintPanel(ctx: ExtensionContext, state: PanelState, updating: boolean)
 			return;
 		}
 		case "pending": {
-			const title = `You asked: ${state.request}`;
+			const { request } = state;
 			showPanel(ctx, {
-				title: () => title,
+				title: () => request,
+				label: "You asked:",
 				body: "",
 				hint: viewHint(false),
 				icon: WORKING_ICON,
-				compact: () => ({ icon: WORKING_ICON, title }),
+				compact: () => ({ icon: WORKING_ICON, title: request }),
 			});
 			return;
 		}
