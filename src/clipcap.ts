@@ -556,6 +556,11 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapLifecycl
 		}
 		// A newer /clipcap or input owns the panel now
 		if (panel !== asking) return;
+		// A recap restored mid-turn resumes its refresh cadence
+		if (previous.kind === "recap") {
+			startRefresh(current, previous.shown.promptText, previous.shown.replay);
+			return;
+		}
 		panel = previous;
 		paint(current);
 	};
