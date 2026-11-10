@@ -20,7 +20,7 @@ Reply with one JSON object and nothing else. Omit any field you have nothing to 
 \`\`\`
 
 - blocked: true only when you need user input to fulfill the goal; pair it with ask. Omit otherwise.
-- kind: debug, plan, answer (simple questions), investigate, research, review, triage, implement (when fresh), refine (when working on existing code), merge, deploy, monitor. Omit if not clear; the renderer picks the right tense.
+- kind: debug, plan, answer (simple questions), investigate, research, review, triage, implement (when fresh), refine (when working on existing code), merge, deploy, monitor, orchestrate (managing subagents). Omit if not clear; the renderer picks the right tense.
 - title: 5 words max. If kind=answer, phrase as question.
 - request: the user's requests before this recap; look at last 3 (6 words max)
 - goal: 7 words max. Omit when the title already states it.
@@ -83,6 +83,7 @@ const KIND_LABELS: Record<string, [string, string]> = {
 	review: ["Reviewing", "Reviewed"],
 	triage: ["Triaging", "Triaged"],
 	implement: ["Implementing", "Implemented"],
+	orchestrate: ["Orchestrating", "Orchestrated"],
 	refine: ["Refining", "Refined"],
 	merge: ["Merging", "Merged"],
 	deploy: ["Deploying", "Deployed"],
