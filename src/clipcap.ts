@@ -2,6 +2,15 @@ import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { getMarkdownTheme } from "@oh-my-pi/pi-coding-agent";
 import { type Component, Container, Markdown, type ThemeColor, truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
 import { RECAP_PROMPT, replayRecap, type AssumedStatus, type RecapStatus, type Replay } from "./recap.ts";
+import {
+	type CompactParts,
+	compactParts,
+	fitCompact,
+	greetingText,
+	nextViewMode,
+	userName,
+	type ViewMode,
+} from "./view.ts";
 
 /** Env seconds as milliseconds; 0 or unparsable disables */
 function envDelayMs(name: string, fallbackSeconds: number): number {
@@ -34,27 +43,24 @@ function refreshDelayMs(elapsedMs: number): number {
 
 const REPAINT_INTERVAL_MS = 30_000;
 
-/** Footer hint, first */
-const DISMISS_HINT = "esc: dismiss";
-
 const CANCEL_HINT: WidthVariants = { full: "esc: cancel", brief: "esc: cancel" };
 
-const DETAILS_KEY = process.env.OMP_CLIPCAP_KEY ?? "ctrl-h";
+const VIEW_KEY = process.env.OMP_CLIPCAP_KEY ?? "ctrl-h";
 
 /** Ctrl+<letter>: control byte on legacy terminals, CSI <cp>;5u in kitty */
-function detailsKeys(key: string): string[] {
+function ctrlKeys(key: string): string[] {
 	const letter = /^ctrl\s*[+-]?\s*(\w)$/i.exec(key.trim())?.[1];
 	if (!letter) return [];
 	const code = letter.toLowerCase().charCodeAt(0);
 	return [String.fromCharCode(code & 0x1f), `\x1b[${code};5u`];
 }
 
-const DETAILS_KEYS = detailsKeys(DETAILS_KEY);
+const VIEW_KEYS = ctrlKeys(VIEW_KEY);
 
-let detailsShown = false;
+const USER_NAME = userName();
 
-/** Expanded fields; empty means no details toggle */
-let detailsExtras: string[] = [];
+/** Sticks across recaps and sessions */
+let viewMode: ViewMode = "default";
 
 let workStartedAt: number | undefined;
 
@@ -71,9 +77,12 @@ interface WidthVariants {
 	brief: string;
 }
 
-function recapHint(): WidthVariants {
-	const details = detailsExtras.length > 0 ? `${DETAILS_KEY}: ${detailsShown ? "less" : "more"}` : "";
-	return { full: [DISMISS_HINT, details].filter(Boolean).join(" · "), brief: DISMISS_HINT };
+/** Names the mode the view key moves to; brief is the bare key */
+function viewHint(hasExtras: boolean): WidthVariants {
+	if (!VIEW_KEYS.length) return { full: "", brief: "" };
+	const next = nextViewMode(viewMode, hasExtras);
+	const label = next === "expanded" ? "more" : next === "compact" ? "compact" : "full";
+	return { full: `${VIEW_KEY}: ${label}`, brief: VIEW_KEY };
 }
 
 /** E.g. `<1m`, `7m`, `1h 5m` */
@@ -111,29 +120,31 @@ const HEADER_GAP = 2;
 
 const METER_CELLS = 10;
 
-/** Title left; meter, time, glyph right */
+/** Title left; meter, time, glyph right. Both are read per render, so the clock stays live */
 export class HeaderRow implements Component {
 	constructor(
-		private readonly title: string,
-		private readonly tail: WidthVariants,
+		private readonly title: () => string,
+		private readonly tail: () => WidthVariants,
 	) { }
 
 	invalidate(): void { }
 
 	render(width: number): readonly string[] {
-		const titleWidth = visibleWidth(this.title);
-		for (const source of [this.tail.full, this.tail.brief]) {
+		const title = this.title();
+		const titleWidth = visibleWidth(title);
+		const variants = this.tail();
+		for (const source of [variants.full, variants.brief]) {
 			const tail = truncateToWidth(source, width);
 			const tailWidth = visibleWidth(tail);
-			if (!tail) return [truncateToWidth(this.title, width)];
-			if (!this.title) return [`${" ".repeat(Math.max(0, width - tailWidth))}${tail}`];
+			if (!tail) return [truncateToWidth(title, width)];
+			if (!title) return [`${" ".repeat(Math.max(0, width - tailWidth))}${tail}`];
 			const room = width - tailWidth - HEADER_GAP;
 			if (room < Math.min(titleWidth, width / 3)) continue;
-			const fitted = truncateToWidth(this.title, room);
+			const fitted = truncateToWidth(title, room);
 			return [`${fitted}${" ".repeat(width - visibleWidth(fitted) - tailWidth)}${tail}`];
 		}
-		const tail = truncateToWidth(this.tail.brief, width);
-		return [truncateToWidth(this.title, width), `${" ".repeat(Math.max(0, width - visibleWidth(tail)))}${tail}`];
+		const tail = truncateToWidth(variants.brief, width);
+		return [truncateToWidth(title, width), `${" ".repeat(Math.max(0, width - visibleWidth(tail)))}${tail}`];
 	}
 }
 
@@ -209,27 +220,48 @@ class MascotGutter implements Component {
 	}
 }
 
+/** Compact mode: one row, no mascot or border; parts are read per render */
+class CompactRow implements Component {
+	constructor(private readonly line: (width: number) => string) { }
+
+	invalidate(): void { }
+
+	render(width: number): readonly string[] {
+		return [this.line(width)];
+	}
+}
+
 const HEADING_TONE: Record<RecapStatus, ThemeColor> = {
 	done: "success",
 	active: "accent",
 	blocked: "warning",
 };
 
+const WORKING_ICON = "⌛";
+
+const GREETING_ICON = "👋";
+
 interface PanelView {
-	title: string;
+	/** Read per render, so the greeting tracks the clock */
+	title: () => string;
+	/** Accent lead-in before the title, e.g. `You asked:` */
+	label?: string;
 	body: string;
 	hint: WidthVariants;
 	status?: RecapStatus;
 	progress?: number;
 	icon?: string;
 	updating?: boolean;
+	/** Compact-line parts, read per render */
+	compact: () => CompactParts;
 }
 
-/** Recap panel above the editor */
-function showRecapPanel(ctx: ExtensionContext, view: PanelView): void {
+/** Panel above the editor, laid out for the current view mode */
+function showPanel(ctx: ExtensionContext, view: PanelView): void {
 	ctx.ui.setWidget(RECAP_WIDGET, (_tui, theme) => {
 		const dim = (text: string) => theme.fg("dim", text);
 		const tone = view.status ? HEADING_TONE[view.status] : "thinkingText";
+		const label = view.label ? `${theme.fg("accent", view.label)} ` : "";
 		// Leave one empty cell so the meter never reads full
 		const filled = view.progress === undefined
 			? 0
@@ -237,15 +269,42 @@ function showRecapPanel(ctx: ExtensionContext, view: PanelView): void {
 		const meter = view.progress === undefined
 			? ""
 			: `${theme.fg(tone, "━".repeat(filled))}${theme.fg("dim", "┄".repeat(METER_CELLS - filled))}`;
-		const elapsed = [elapsedPhrase(), view.updating && "(updating…)"].filter(Boolean).join(" ");
-		const tail = [elapsed && dim(elapsed), view.icon].filter(Boolean).join(" ");
+		const elapsed = () => {
+			const text = [elapsedPhrase(), view.updating && "(updating…)"].filter(Boolean).join(" ");
+			return text && dim(text);
+		};
+		if (viewMode === "compact") {
+			return new CompactRow(width => {
+				const parts = view.compact();
+				return fitCompact(
+					{
+						icon: parts.icon,
+						// Styling an empty title leaves escape codes that read as a title
+						title: parts.title && `${label}${theme.fg(tone, parts.title)}`,
+						request: parts.request && dim(parts.request),
+						outcome: parts.outcome && theme.fg("thinkingText", parts.outcome),
+						meter,
+						elapsed: elapsed(),
+						hint: view.hint.brief && dim(view.hint.brief),
+					},
+					width,
+					dim,
+				);
+			});
+		}
 		const panel = new Container();
-		// Styling an empty title leaves escape codes HeaderRow reads as a title
 		panel.addChild(
-			new HeaderRow(view.title && theme.fg(tone, view.title), {
-				full: [meter, tail].filter(Boolean).join(" "),
-				brief: tail,
-			}),
+			new HeaderRow(
+				() => {
+					const title = view.title();
+					// Styling an empty title leaves escape codes HeaderRow reads as a title
+					return title && `${label}${theme.fg(tone, title)}`;
+				},
+				() => {
+					const tail = [elapsed(), view.icon].filter(Boolean).join(" ");
+					return { full: [meter, tail].filter(Boolean).join(" "), brief: tail };
+				},
+			),
 		);
 		const body = view.body
 			? new Markdown(view.body, 0, 0, getMarkdownTheme(), {
@@ -257,19 +316,77 @@ function showRecapPanel(ctx: ExtensionContext, view: PanelView): void {
 	});
 }
 
-/** Shows replay; keepDetails preserves an expanded panel */
-function activatePanel(current: ExtensionContext, replay: Replay, keepDetails: boolean, updating = false): void {
-	detailsExtras = replay.extras ?? [];
-	if (!keepDetails) detailsShown = false;
-	showRecapPanel(current, {
-		title: replay.title ?? "",
-		body: detailsShown && replay.expanded ? replay.expanded : replay.markdown,
-		hint: recapHint(),
-		status: replay.status,
-		progress: replay.progress,
-		icon: replay.icon,
-		updating,
-	});
+/** Recap shown, with the prompt that refreshes it */
+interface ShownRecap {
+	promptText: string;
+	replay: Replay;
+}
+
+/** What the panel shows when no asked recap is in flight */
+type SettledPanel =
+	| { kind: "greeting" }
+	/** Submitted; no recap for this turn yet */
+	| { kind: "pending"; request: string }
+	| { kind: "recap"; shown: ShownRecap };
+
+/** Always painted in the main TUI session; never hidden */
+type PanelState = SettledPanel | { kind: "recapping"; previous: SettledPanel };
+
+function paintPanel(ctx: ExtensionContext, state: PanelState, updating: boolean): void {
+	switch (state.kind) {
+		case "greeting": {
+			const title = () => greetingText(new Date().getHours(), USER_NAME);
+			showPanel(ctx, {
+				title,
+				body: "",
+				hint: viewHint(false),
+				compact: () => ({ icon: GREETING_ICON, title: title() }),
+			});
+			return;
+		}
+		case "pending": {
+			const { request } = state;
+			showPanel(ctx, {
+				title: () => request,
+				label: "You asked:",
+				body: "",
+				hint: viewHint(false),
+				icon: WORKING_ICON,
+				compact: () => ({ icon: WORKING_ICON, title: request }),
+			});
+			return;
+		}
+		case "recapping":
+			showPanel(ctx, {
+				title: () => "recapping…",
+				body: "",
+				hint: CANCEL_HINT,
+				compact: () => ({ icon: WORKING_ICON, title: "recapping…" }),
+			});
+			return;
+		case "recap": {
+			const { replay } = state.shown;
+			const parts = compactParts(replay);
+			showPanel(ctx, {
+				title: () => replay.title ?? "",
+				body: viewMode === "expanded" && replay.expanded ? replay.expanded : replay.markdown,
+				hint: viewHint((replay.extras?.length ?? 0) > 0),
+				status: replay.status,
+				progress: replay.progress,
+				icon: replay.icon,
+				updating,
+				compact: () => parts,
+			});
+			return;
+		}
+	}
+}
+
+/** True when the session holds a user or assistant message */
+function hasHistory(ctx: ExtensionContext): boolean {
+	return ctx.sessionManager
+		.getBranch()
+		.some(entry => entry.type === "message" && (entry.message.role === "user" || entry.message.role === "assistant"));
 }
 
 type RecapMode = "idle" | "asked" | "refresh" | "auto";
@@ -309,8 +426,6 @@ function recapRunner(): RecapRunner {
 		const abort = new AbortController();
 		const speculative = mode === "idle" || mode === "auto";
 		running = { abort, speculative };
-		let answered = false;
-		if (mode === "asked") showRecapPanel(current, { title: "recapping…", body: "", hint: CANCEL_HINT });
 		try {
 			const { replyText } = await current.runEphemeralTurn({
 				promptText,
@@ -321,36 +436,23 @@ function recapRunner(): RecapRunner {
 			});
 			if (abort.signal.aborted) return undefined;
 			if (!recapStillWanted(mode, current)) return undefined;
-			const replay = replayRecap(replyText, assumed);
-			if (!replay) return undefined;
-			if (mode !== "refresh" && mode !== "auto") activatePanel(current, replay, false);
-			answered = true;
-			return replay;
+			return replayRecap(replyText, assumed);
 		} catch (error) {
 			if (!abort.signal.aborted && mode === "asked") {
 				current.ui.notify(`/clipcap: recap failed (${error instanceof Error ? error.message : String(error)})`, "warning");
 			}
 			return undefined;
 		} finally {
-			if (running?.abort === abort) {
-				running = undefined;
-				if (mode === "asked" && !answered) current.ui.setWidget(RECAP_WIDGET, undefined);
-			}
+			if (running?.abort === abort) running = undefined;
 		}
 	};
 
 	return { run, cancel, busy: () => running !== undefined };
 }
 
-interface RecapRefresher {
-	start(ctx: SideTurnHost, promptText: string, replay: Replay): void;
-	/** Stop refreshing; /clipcap repaints the block */
-	stop(): void;
-}
-
-interface ShownRecap {
-	promptText: string;
-	replay: Replay;
+interface RecapLifecycle {
+	/** /clipcap: recap now; failure or esc restores the previous view */
+	ask(ctx: SideTurnHost, promptText: string): Promise<void>;
 }
 
 interface RefreshState {
@@ -359,15 +461,24 @@ interface RefreshState {
 	timer?: { cancel(): void };
 }
 
-function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapRefresher {
+function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapLifecycle {
 	const idleEnabled = IDLE_MS > 0;
 
 	let ctx: ExtensionContext | undefined;
 	let clock: { cancel(): void } | undefined;
 	let autoClock: { cancel(): void } | undefined;
 	let armed = false;
-	let shown: ShownRecap | undefined;
+	let panel: PanelState = { kind: "greeting" };
 	let refresh: RefreshState | undefined;
+	let stopListening: (() => void) | undefined;
+
+	/** Repaints the current state; a recap with a run in flight reads as updating */
+	const paint = (current: ExtensionContext) => {
+		if (!canPaintRecap(current)) return;
+		paintPanel(current, panel, panel.kind === "recap" && recap.busy());
+	};
+
+	const shownRecap = (): ShownRecap | undefined => (panel.kind === "recap" ? panel.shown : undefined);
 
 	const stopClock = () => {
 		clock?.cancel();
@@ -379,19 +490,9 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapRefreshe
 		refresh = undefined;
 	};
 
-	const hidePanel = (current: ExtensionContext) => {
-		stopRefresh();
-		shown = undefined;
-		current.ui.setWidget(RECAP_WIDGET, undefined);
-	};
-
 	const nextRefreshAt = (): number => {
 		const now = Date.now();
 		return now + refreshDelayMs(now - (workStartedAt ?? now));
-	};
-
-	const paintRefresh = (current: ExtensionContext, state: RefreshState, updating = false) => {
-		activatePanel(current, state.shown.replay, true, updating);
 	};
 
 	const scheduleTick = (current: ExtensionContext, state: RefreshState) => {
@@ -405,7 +506,7 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapRefreshe
 		if (refresh !== state || !current) return;
 		if (sessionSettled(current)) {
 			stopRefresh();
-			activatePanel(current, state.shown.replay, true);
+			paint(current);
 			return;
 		}
 		if (Date.now() >= state.nextAt) {
@@ -413,59 +514,95 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapRefreshe
 				stopRefresh();
 				return;
 			}
-			paintRefresh(current, state, true);
-			const replay = await recap.run(current, state.shown.promptText, "refresh", "active");
+			const running = recap.run(current, state.shown.promptText, "refresh", "active");
+			paint(current);
+			const replay = await running;
 			if (refresh !== state) return;
 			if (replay) state.shown.replay = replay;
 			state.nextAt = nextRefreshAt();
 		}
-		paintRefresh(current, state);
+		paint(current);
 		scheduleTick(current, state);
 	};
 
 	const startRefresh = (current: SideTurnHost, promptText: string, replay: Replay) => {
 		stopRefresh();
-		shown = { promptText, replay };
+		const shown: ShownRecap = { promptText, replay };
+		panel = { kind: "recap", shown };
+		paint(current);
 		// Settled already: the recap ran as done, and agent_end gives any later turn its final refresh
 		if (sessionSettled(current)) return;
 		ctx ??= current;
 		const state: RefreshState = { shown, nextAt: nextRefreshAt() };
 		refresh = state;
-		paintRefresh(current, state);
 		scheduleTick(current, state);
-	};
-
-	const forgetPanel = () => {
-		stopRefresh();
-		shown = undefined;
 	};
 
 	const finalRefresh = async (current: ExtensionContext, state: ShownRecap): Promise<void> => {
 		if (!hasSideTurn(current)) {
-			activatePanel(current, state.replay, true);
+			paint(current);
 			return;
 		}
-		activatePanel(current, state.replay, true, true);
-		const replay = await recap.run(current, state.promptText, "refresh", "done");
-		if (shown !== state) return;
+		const running = recap.run(current, state.promptText, "refresh", "done");
+		paint(current);
+		const replay = await running;
+		if (shownRecap() !== state) return;
 		if (replay) state.replay = replay;
-		activatePanel(current, state.replay, true);
+		paint(current);
 	};
+
+	const ask = async (current: SideTurnHost, promptText: string): Promise<void> => {
+		stopRefresh();
+		const previous = panel.kind === "recapping" ? panel.previous : panel;
+		const asking: PanelState = { kind: "recapping", previous };
+		panel = asking;
+		const assumed: AssumedStatus = current.isIdle() && !current.hasPendingMessages() ? "done" : "active";
+		const running = recap.run(current, promptText, "asked", assumed);
+		paint(current);
+		const replay = await running;
+		if (replay) {
+			startRefresh(current, promptText, replay);
+			return;
+		}
+		// A newer /clipcap or input owns the panel now
+		if (panel !== asking) return;
+		// agent_end skipped its follow-up while the asked recap ran; catch up now
+		const settled = sessionSettled(current);
+		if (previous.kind === "recap" && settled && previous.shown.replay.status === "active") {
+			panel = previous;
+			void finalRefresh(current, previous.shown);
+			return;
+		}
+		// A recap restored mid-turn resumes its refresh cadence
+		if (previous.kind === "recap") {
+			startRefresh(current, previous.shown.promptText, previous.shown.replay);
+			return;
+		}
+		panel = previous;
+		paint(current);
+		if (previous.kind === "pending" && settled) {
+			armed = true;
+			restartClock();
+		}
+	};
+
+	/** An idle or auto recap is wanted only before this turn has one */
+	const awaitingRecap = () => panel.kind === "greeting" || panel.kind === "pending";
 
 	const fire = () => {
 		clock = undefined;
 		const current = ctx;
 		if (!current || !armed) return;
 		armed = false;
-		if (shown || recap.busy() || !isQuiet(current)) return;
+		if (!awaitingRecap() || recap.busy() || !isQuiet(current)) return;
 		if (!hasSideTurn(current)) {
 			current.ui.notify("/clipcap: this host has no runEphemeralTurn; idle recaps are off.", "warning");
 			return;
 		}
 		void recap.run(current, RECAP_PROMPT, "idle", "done").then(replay => {
-			if (!replay) return;
-			shown = { promptText: RECAP_PROMPT, replay };
-			activatePanel(current, replay, false);
+			if (!replay || !awaitingRecap()) return;
+			panel = { kind: "recap", shown: { promptText: RECAP_PROMPT, replay } };
+			paint(current);
 		});
 	};
 
@@ -486,9 +623,9 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapRefreshe
 		autoClock = undefined;
 		const current = ctx;
 		if (!current || workStartedAt === undefined) return;
-		if (shown || recap.busy() || !hasSideTurn(current)) return;
+		if (!awaitingRecap() || recap.busy() || !hasSideTurn(current)) return;
 		void recap.run(current, RECAP_PROMPT, "auto", "active").then(replay => {
-			if (!replay || workStartedAt === undefined) return;
+			if (!replay || workStartedAt === undefined || !awaitingRecap()) return;
 			startRefresh(current, RECAP_PROMPT, replay);
 		});
 	};
@@ -503,31 +640,36 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapRefreshe
 	const adopt = (sessionCtx: ExtensionContext) => {
 		if (sessionCtx.agent.kind !== "main") return;
 		ctx = sessionCtx;
-		armed = false;
 		workStartedAt = undefined;
 		settledWorkMs = undefined;
 		stopClock();
 		stopAuto();
+		stopRefresh();
 		recap.cancel(false);
-		hidePanel(sessionCtx);
-		sessionCtx.ui.onTerminalInput(data => {
-			const escape = data === "\x1b" || data === "\x1b[27u";
-			if (DETAILS_KEYS.includes(data) && shown && detailsExtras.length > 0) {
-				detailsShown = !detailsShown;
-				activatePanel(sessionCtx, shown.replay, true);
+		panel = { kind: "greeting" };
+		paint(sessionCtx);
+		// A resumed conversation gets its recap once the session goes quiet
+		armed = hasHistory(sessionCtx);
+		restartClock();
+		stopListening?.();
+		stopListening = sessionCtx.ui.onTerminalInput(data => {
+			if (VIEW_KEYS.includes(data)) {
+				viewMode = nextViewMode(viewMode, (shownRecap()?.replay.extras?.length ?? 0) > 0);
+				paint(sessionCtx);
 				return { consume: true };
 			}
-			recap.cancel(!escape);
-			if (escape) {
-				hidePanel(sessionCtx);
-				armed = false;
-			}
+			// esc cancels only an asked recap, which ask() then restores; refreshes run on so the recap stays current
+			const escape = data === "\x1b" || data === "\x1b[27u";
+			recap.cancel(!(escape && panel.kind === "recapping"));
 			restartClock();
 		});
 	};
 
 	pi.on("session_start", (_event, sessionCtx) => adopt(sessionCtx));
 	pi.on("session_switch", (_event, sessionCtx) => adopt(sessionCtx));
+	// The shown recap would describe the branch left behind
+	pi.on("session_tree", (_event, sessionCtx) => adopt(sessionCtx));
+	pi.on("session_branch", (_event, sessionCtx) => adopt(sessionCtx));
 	pi.on("agent_start", (_event, sessionCtx) => {
 		if (sessionCtx.agent.kind !== "main") return;
 		ctx = sessionCtx;
@@ -535,6 +677,8 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapRefreshe
 		settledWorkMs = undefined;
 		recap.cancel(true);
 		armAuto(sessionCtx);
+		// The placeholder painted before the turn had a start time
+		if (panel.kind === "pending") paint(sessionCtx);
 	});
 	pi.on("agent_end", (_event, sessionCtx) => {
 		if (sessionCtx.agent.kind !== "main") return;
@@ -543,31 +687,36 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapRefreshe
 		settledWorkMs = workStartedAt === undefined ? undefined : Date.now() - workStartedAt;
 		workStartedAt = undefined;
 		stopRefresh();
+		const shown = shownRecap();
 		if (shown) void finalRefresh(sessionCtx, shown);
+		else paint(sessionCtx);
 		armed = true;
 		restartClock();
 	});
-	pi.on("input", (_event, sessionCtx) => {
+	pi.on("input", (event, sessionCtx) => {
 		if (sessionCtx.agent.kind !== "main") return;
 		ctx = sessionCtx;
 		recap.cancel(true);
-		hidePanel(sessionCtx);
 		// A submit that starts no turn (slash or bang command) must not arm; agent_end re-arms
 		armed = false;
 		stopClock();
+		const text = event.text.trim();
+		if (text.startsWith("/") || text.startsWith("!")) return;
+		stopRefresh();
+		panel = { kind: "pending", request: text.split("\n")[0] || "…" };
+		paint(sessionCtx);
 	});
 
-	return { start: startRefresh, stop: forgetPanel };
+	return { ask };
 }
 
 export default function clipcapExtension(pi: ExtensionAPI) {
 	pi.setLabel("/clipcap — recap");
 
-	const recap = recapRunner();
-	const refresher = wireRecapLifecycle(pi, recap);
+	const lifecycle = wireRecapLifecycle(pi, recapRunner());
 
 	pi.registerCommand("clipcap", {
-		description: "Recap this conversation as a dim block above the editor",
+		description: "Recap this conversation in the panel above the editor",
 		handler: async (args, ctx) => {
 			if (ctx.mode !== "tui") {
 				ctx.ui.notify("/clipcap needs the interactive TUI.", "warning");
@@ -579,11 +728,7 @@ export default function clipcapExtension(pi: ExtensionAPI) {
 			}
 
 			const focus = args.trim();
-			const promptText = focus ? `${RECAP_PROMPT}\n\n${focus}` : RECAP_PROMPT;
-			refresher.stop();
-			const assumed: AssumedStatus = ctx.isIdle() && !ctx.hasPendingMessages() ? "done" : "active";
-			const replay = await recap.run(ctx, promptText, "asked", assumed);
-			if (replay) refresher.start(ctx, promptText, replay);
+			await lifecycle.ask(ctx, focus ? `${RECAP_PROMPT}\n\n${focus}` : RECAP_PROMPT);
 		},
 	});
 }
