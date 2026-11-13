@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0 - 2026-11-14
+
+### ✨ New features
+
+- **Always visible**: the panel never hides. A fresh session greets you, submitting a prompt shows `You asked: …`, and a recap replaces it as soon as one lands.
+- **Compact view**: `ctrl-h` cycles default, expanded, and compact (one line) views.
+
+### 🐛 Fixes
+
+- The panel no longer sticks on `You asked: …` when a recap outlives the turn that started it, or when a stale recap from an earlier turn blocks the next one: the idle clock retries instead of going quiet, and a submitted prompt cancels stale runs.
+
 ## v0.1.0 - 2026-11-10
 
 ### ✨ New features
