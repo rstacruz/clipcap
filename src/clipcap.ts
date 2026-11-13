@@ -398,20 +398,29 @@ function recapStillWanted(mode: RecapMode, current: ExtensionContext): boolean {
 	return true;
 }
 
+/** Which in-flight recaps a cancel leaves running */
+type CancelPolicy =
+	/** A new run replaces every one */
+	| "all"
+	/** Everything stale from an earlier turn, but a `/clipcap` still lands */
+	| "exceptAsked"
+	/** Only the idle and mid-work recaps, which typing invalidates */
+	| "speculativeOnly";
+
 /** In-flight recap; a new run supersedes it */
 interface RecapRunner {
 	run(ctx: SideTurnHost, promptText: string, mode: RecapMode, assumed: AssumedStatus): Promise<Replay | undefined>;
-	/** userActivity spares asked recaps */
-	cancel(userActivity: boolean): void;
+	cancel(policy: CancelPolicy): void;
 	busy(): boolean;
 }
 
 function recapRunner(): RecapRunner {
-	let running: { abort: AbortController; speculative: boolean } | undefined;
+	let running: { abort: AbortController; mode: RecapMode } | undefined;
 
-	const cancel = (userActivity: boolean): void => {
+	const cancel = (policy: CancelPolicy): void => {
 		if (!running) return;
-		if (userActivity && !running.speculative) return;
+		if (policy === "speculativeOnly" && running.mode !== "idle" && running.mode !== "auto") return;
+		if (policy === "exceptAsked" && running.mode === "asked") return;
 		running.abort.abort();
 		running = undefined;
 	};
@@ -422,10 +431,9 @@ function recapRunner(): RecapRunner {
 		mode: RecapMode,
 		assumed: AssumedStatus,
 	): Promise<Replay | undefined> => {
-		cancel(false);
+		cancel("all");
 		const abort = new AbortController();
-		const speculative = mode === "idle" || mode === "auto";
-		running = { abort, speculative };
+		running = { abort, mode };
 		try {
 			const { replyText } = await current.runEphemeralTurn({
 				promptText,
@@ -589,20 +597,41 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapLifecycl
 	/** An idle or auto recap is wanted only before this turn has one */
 	const awaitingRecap = () => panel.kind === "greeting" || panel.kind === "pending";
 
+	/** Idle recap attempts that produced nothing; one per turn, so a broken provider cannot loop */
+	const IDLE_ATTEMPTS = 3;
+
+	let misses = 0;
+
 	const fire = () => {
 		clock = undefined;
 		const current = ctx;
 		if (!current || !armed) return;
+		if (!awaitingRecap()) {
+			armed = false;
+			return;
+		}
+		// Nothing else wakes this clock, so a run in flight or a draft in the editor gets another try
+		if (recap.busy() || !isQuiet(current)) {
+			restartClock();
+			return;
+		}
 		armed = false;
-		if (!awaitingRecap() || recap.busy() || !isQuiet(current)) return;
 		if (!hasSideTurn(current)) {
 			current.ui.notify("/clipcap: this host has no runEphemeralTurn; idle recaps are off.", "warning");
 			return;
 		}
 		void recap.run(current, RECAP_PROMPT, "idle", "done").then(replay => {
-			if (!replay || !awaitingRecap()) return;
-			panel = { kind: "recap", shown: { promptText: RECAP_PROMPT, replay } };
-			paint(current);
+			if (replay) {
+				misses = 0;
+				if (!awaitingRecap()) return;
+				panel = { kind: "recap", shown: { promptText: RECAP_PROMPT, replay } };
+				paint(current);
+				return;
+			}
+			// Aborted or superseded with the panel still waiting: retry, but not forever
+			if (!awaitingRecap() || ++misses >= IDLE_ATTEMPTS) return;
+			armed = true;
+			restartClock();
 		});
 	};
 
@@ -623,10 +652,23 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapLifecycl
 		autoClock = undefined;
 		const current = ctx;
 		if (!current || workStartedAt === undefined) return;
-		if (!awaitingRecap() || recap.busy() || !hasSideTurn(current)) return;
+		if (!awaitingRecap() || !hasSideTurn(current)) return;
+		// A recap started before this turn blocks the one it needs; keep trying while the turn runs
+		if (recap.busy()) {
+			armAuto(current);
+			return;
+		}
 		void recap.run(current, RECAP_PROMPT, "auto", "active").then(replay => {
-			if (!replay || workStartedAt === undefined || !awaitingRecap()) return;
-			startRefresh(current, RECAP_PROMPT, replay);
+			if (!replay) return;
+			if (workStartedAt !== undefined) {
+				if (awaitingRecap()) startRefresh(current, RECAP_PROMPT, replay);
+				return;
+			}
+			// The turn ended while this ran; the idle recap has the right status and its clock is armed
+			if (awaitingRecap()) {
+				armed = true;
+				restartClock();
+			}
 		});
 	};
 
@@ -645,7 +687,7 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapLifecycl
 		stopClock();
 		stopAuto();
 		stopRefresh();
-		recap.cancel(false);
+		recap.cancel("all");
 		panel = { kind: "greeting" };
 		paint(sessionCtx);
 		// A resumed conversation gets its recap once the session goes quiet
@@ -660,7 +702,7 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapLifecycl
 			}
 			// esc cancels only an asked recap, which ask() then restores; refreshes run on so the recap stays current
 			const escape = data === "\x1b" || data === "\x1b[27u";
-			recap.cancel(!(escape && panel.kind === "recapping"));
+			recap.cancel(escape && panel.kind === "recapping" ? "all" : "speculativeOnly");
 			restartClock();
 		});
 	};
@@ -675,7 +717,8 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapLifecycl
 		ctx = sessionCtx;
 		workStartedAt = Date.now();
 		settledWorkMs = undefined;
-		recap.cancel(true);
+		misses = 0;
+		recap.cancel("exceptAsked");
 		armAuto(sessionCtx);
 		// The placeholder painted before the turn had a start time
 		if (panel.kind === "pending") paint(sessionCtx);
@@ -696,7 +739,8 @@ function wireRecapLifecycle(pi: ExtensionAPI, recap: RecapRunner): RecapLifecycl
 	pi.on("input", (event, sessionCtx) => {
 		if (sessionCtx.agent.kind !== "main") return;
 		ctx = sessionCtx;
-		recap.cancel(true);
+		// Everything from before the prompt is stale, except the `/clipcap` this submit may be carrying
+		recap.cancel("exceptAsked");
 		// A submit that starts no turn (slash or bang command) must not arm; agent_end re-arms
 		armed = false;
 		stopClock();
